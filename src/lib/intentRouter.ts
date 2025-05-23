@@ -55,20 +55,76 @@ export function matchIntent(question: string, trades: any[]): IntentResult {
     }
   }
 
-  // Check for expired losses
+  // Check for expired losses (includes expiring, expired, etc.)
   if (
-    q.includes("expired") &&
-    (q.includes("loss") || q.includes("option") || q.includes("percentage") || q.includes("expire"))
+    (q.includes("expire") || q.includes("expired") || q.includes("expiration") || q.includes("expiring")) &&
+    (q.includes("loss") || q.includes("option") || q.includes("percentage"))
   ) {
-    const losses = trades.filter(t => parseAmount(t.amount) < 0);
-    const expired = losses.filter(t => t.description.toLowerCase().includes("expire"));
-    const lossSum = losses.reduce((sum, t) => sum + Math.abs(parseAmount(t.amount)), 0);
-    const expiredSum = expired.reduce((sum, t) => sum + Math.abs(parseAmount(t.amount)), 0);
-    const percent = lossSum ? (expiredSum / lossSum) * 100 : 0;
+    // Find all expired options (OEXP transactions)
+    const expiredOptions = trades.filter(t => t.transCode === "OEXP");
+    
+    // Calculate total cost of expired options by matching with their BTO transactions
+    let totalExpiredCost = 0;
+    
+    expiredOptions.forEach(expired => {
+      // Find matching BTO transactions for this expired option
+      const matchingBTOs = trades.filter(t => 
+        t.transCode === "BTO" && 
+        areOptionsMatching(t.description, expired.description)
+      );
+      
+      // Sum up the cost of all matching BTO transactions
+      matchingBTOs.forEach(bto => {
+        totalExpiredCost += Math.abs(parseAmount(bto.amount));
+      });
+    });
+    
+    // Calculate total money spent on positions that resulted in losses
+    // (BTO cost for positions that either expired or were sold at a loss)
+    
+    let totalMoneyOnLosingPositions = totalExpiredCost; // Start with expired costs
+    
+    // Find positions that were closed at a loss
+    const positionMap = new Map();
+    
+    trades.forEach(trade => {
+      if (trade.transCode === "BTO" || trade.transCode === "STC") {
+        const key = trade.description;
+        if (!positionMap.has(key)) {
+          positionMap.set(key, { btoCost: 0, stcRevenue: 0, expired: false });
+        }
+        const pos = positionMap.get(key);
+        
+        if (trade.transCode === "BTO") {
+          pos.btoCost += Math.abs(parseAmount(trade.amount));
+        } else if (trade.transCode === "STC") {
+          pos.stcRevenue += parseAmount(trade.amount);
+        }
+      }
+    });
+    
+    // Mark expired positions
+    expiredOptions.forEach(expired => {
+      if (positionMap.has(expired.description)) {
+        positionMap.get(expired.description).expired = true;
+      }
+    });
+    
+    // Add BTO costs for positions that were closed at a loss (but not expired)
+    positionMap.forEach((pos, description) => {
+      if (!pos.expired && pos.stcRevenue > 0) {
+        const netResult = pos.stcRevenue - pos.btoCost;
+        if (netResult < 0) { // Position resulted in a loss
+          totalMoneyOnLosingPositions += pos.btoCost;
+        }
+      }
+    });
+    
+    const percent = totalMoneyOnLosingPositions > 0 ? (totalExpiredCost / totalMoneyOnLosingPositions) * 100 : 0;
     return { type: "expiredLossPercent", value: percent };
   }
 
-  // Generic profit/loss question
+  // Generic profit/loss question — intentionally placed *after* specific loss checks
   if (q.includes("profit") || q.includes("loss")) {
     const value = trades.reduce((sum, t) => sum + parseAmount(t.amount), 0);
     return { type: "profit", value };
@@ -96,6 +152,35 @@ export function matchIntent(question: string, trades: any[]): IntentResult {
 
   console.log("Matched intent: fallback");
   return { type: "fallback" };
+}
+
+// Helper function to match option descriptions
+function areOptionsMatching(btoDescription: string, expiredDescription: string): boolean {
+  const bto = btoDescription.toLowerCase();
+  const exp = expiredDescription.toLowerCase();
+  
+  // Extract key components: symbol, date, type (put/call), strike
+  const extractOptionDetails = (desc: string) => {
+    const match = desc.match(/(\w+)\s+(\d+\/\d+\/\d+)\s+(put|call)\s+\$?([\d,]+\.?\d*)/);
+    return match ? {
+      symbol: match[1],
+      date: match[2],
+      type: match[3],
+      strike: match[4].replace(/,/g, '')
+    } : null;
+  };
+  
+  const btoDetails = extractOptionDetails(bto);
+  const expDetails = extractOptionDetails(exp);
+  
+  if (!btoDetails || !expDetails) return false;
+  
+  return (
+    btoDetails.symbol === expDetails.symbol &&
+    btoDetails.date === expDetails.date &&
+    btoDetails.type === expDetails.type &&
+    btoDetails.strike === expDetails.strike
+  );
 }
 
 function parseAmount(value: string): number {

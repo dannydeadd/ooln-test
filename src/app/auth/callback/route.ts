@@ -7,7 +7,8 @@ export async function GET(request: Request) {
   const code = requestUrl.searchParams.get('code');
 
   if (code) {
-    const cookieStore = cookies();
+    const cookieStore = await cookies(); // ✅ await added
+
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -31,4 +32,4 @@ export async function GET(request: Request) {
 
   // URL to redirect to after sign in process completes
   return NextResponse.redirect(new URL('/', requestUrl.origin));
-} 
+}

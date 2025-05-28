@@ -1,3 +1,4 @@
+// src/app/api/tradint/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -11,7 +12,8 @@ export async function POST(req: NextRequest) {
     const csvContent = await fs.readFile(filePath, 'utf-8');
     const trades = parseCSV(csvContent);
 
-    const intent = matchIntent(userMessage, trades);
+    // ✅ AWAIT semantic + keyword intent matcher
+    const intent = await matchIntent(userMessage, trades);
 
     // Helper
     const parseAmount = (val: string) =>
@@ -56,20 +58,27 @@ export async function POST(req: NextRequest) {
     switch (intent.type) {
       case "deposit":
         return NextResponse.json({ aiResponse: `A total of $${intent.value.toFixed(2)} was deposited.` });
+
       case "withdrawal":
         return NextResponse.json({ aiResponse: `A total of $${intent.value.toFixed(2)} was withdrawn.` });
+
       case "profit":
         return NextResponse.json({ aiResponse: `Your net realized profit/loss is $${intent.value.toFixed(2)}.` });
+
       case "winRate":
         return NextResponse.json({ aiResponse: `Your win rate is ${intent.value.toFixed(2)}%.` });
+
       case "positionSize":
         return NextResponse.json({ aiResponse: `Your average position size is $${intent.value.toFixed(2)}.` });
+
       case "tradeCount":
         return NextResponse.json({ aiResponse: `You made a total of ${intent.value} trades.` });
+
       case "mostProfitable":
         return NextResponse.json({
           aiResponse: `Your most profitable trade was "${intent.description}", earning $${intent.value.toFixed(2)}.`
         });
+
       case "expiredLossPercent":
         return NextResponse.json({
           aiResponse: `${intent.value.toFixed(2)}% of total losses came from options that expired worthless.`
@@ -98,7 +107,7 @@ Please answer the user's question using only the summary above.
 
 Speak like a professional financial advisor coaching a retail trader. Be constructive, concise, and encouraging.
 
-Use clean Markdown formatting, and split sections like this, dont forget to leave space between every section:
+Use clean Markdown formatting, and split sections like this, don't forget to leave space between every section:
 
 **Position Sizing**
 - ...
